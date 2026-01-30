@@ -34,9 +34,9 @@ public class OiAmigo extends OpMode {
     Limelight3A limelight;
     final int TARGET_ID = 20;
 
-    // ===== CONTROLE GIMBAL DA CÂMERA =====
-    final double kP = 0.030;   // proporcional
-    final double kD = 0.003;   // amortecimento
+    // ===== PID DA CÂMERA =====
+    final double kP = 0.020;
+    final double kD = 0.003;
     final double DEAD_DEG = 0.4;
     final double MAX_POWER = 0.6;
 
@@ -110,13 +110,15 @@ public class OiAmigo extends OpMode {
     @Override
     public void loop() {
 
-        // ================= ALINHAMENTO GIMBAL DA CÂMERA =================
+        // ================= ROTAÇÃO DO ROBÔ (SÓ DRIVE) =================
+        double rotRobo = gamepad1.right_stick_x;
+
+        // ================= CÂMERA (SÓ LIMELIGHT) =================
         double txDegrees = 0;
         boolean viuTag = false;
 
         if (limelight != null) {
             LLResult result = limelight.getLatestResult();
-
             if (result != null && result.isValid()) {
                 List<LLResultTypes.FiducialResult> fiducials =
                         result.getFiducialResults();
@@ -133,23 +135,25 @@ public class OiAmigo extends OpMode {
             }
         }
 
+        double giroCamera = 0;
+
         if (viuTag) {
             double erro = txDegrees;
             double derivada = erro - ultimoErro;
-
-            double giroCamera = (erro * kP) + (derivada * kD);
             ultimoErro = erro;
+
+            giroCamera = (erro * kP) + (derivada * kD);
 
             if (Math.abs(erro) < DEAD_DEG) {
                 giroCamera = 0;
             }
-
-            giroCamera = Math.max(-MAX_POWER, Math.min(MAX_POWER, giroCamera));
-            cameraMotor.setPower(giroCamera);
         } else {
-            cameraMotor.setPower(0);
+            giroCamera = 0;
             ultimoErro = 0;
         }
+
+        giroCamera = Math.max(-MAX_POWER, Math.min(MAX_POWER, giroCamera));
+        cameraMotor.setPower(compensar(giroCamera));
 
         // ================= MOVIMENTO =================
         double x = gamepad1.left_stick_x;
@@ -163,30 +167,30 @@ public class OiAmigo extends OpMode {
         }
 
         if (SpinMode == 0) {
-            AzulFE = FAzul + (gamepad1.right_stick_x * 1.8);
-            AzulTD = FAzul - (gamepad1.right_stick_x * 1.8);
-            VermelhoTE = FVermelho + (gamepad1.right_stick_x * 1.8);
-            VermelhoFD = FVermelho - (gamepad1.right_stick_x * 1.8);
+            AzulFE = FAzul + (rotRobo * 1.8);
+            AzulTD = FAzul - (rotRobo * 1.8);
+            VermelhoTE = FVermelho + (rotRobo * 1.8);
+            VermelhoFD = FVermelho - (rotRobo * 1.8);
         } else {
-            AzulFE = FAzul + gamepad1.right_stick_x;
-            AzulTD = FAzul - gamepad1.right_stick_x;
-            VermelhoTE = FVermelho + gamepad1.right_stick_x;
-            VermelhoFD = FVermelho - gamepad1.right_stick_x;
+            AzulFE = FAzul + rotRobo;
+            AzulTD = FAzul - rotRobo;
+            VermelhoTE = FVermelho + rotRobo;
+            VermelhoFD = FVermelho - rotRobo;
         }
 
-        fd.setPower(VermelhoFD);
-        te.setPower(VermelhoTE);
-        fe.setPower(AzulFE);
-        td.setPower(AzulTD);
+        fd.setPower(compensar(VermelhoFD));
+        te.setPower(compensar(VermelhoTE));
+        fe.setPower(compensar(AzulFE));
+        td.setPower(compensar(AzulTD));
 
         // ================= INTAKE + RB =================
-        boolean rtPressionado = gamepad1.right_trigger > 0.5;
+        boolean rtPressionado = gamepad1.right_trigger > 0.8;
 
         if (!rbAtivo) {
             if (rtPressionado && !rtAnterior) intakeAtivo = !intakeAtivo;
             rtAnterior = rtPressionado;
 
-            if (intakeAtivo) intake.setPower(compensar(0.8));
+            if (intakeAtivo) intake.setPower(compensar(0.7));
             else intake.setPower(0);
         }
 
@@ -222,10 +226,10 @@ public class OiAmigo extends OpMode {
         if (lbAtual && !lbAnterior) launcherAtivo = !launcherAtivo;
         lbAnterior = lbAtual;
 
-        if (launcherAtivo) launcher.setPower(compensar(0.8));
+        if (launcherAtivo) launcher.setPower(compensar(1.0));
         else launcher.setPower(0);
 
-        // ================= SERVO EMPURRADOR =================
+        // ================= SERVO =================
         if (gamepad1.left_trigger > 0.1)
             servoEmpurrador.setPosition(SERVO_EMPURRE);
         else

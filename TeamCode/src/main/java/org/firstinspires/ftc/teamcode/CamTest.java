@@ -9,10 +9,11 @@ import com.qualcomm.hardware.limelightvision.LLResult;
 import com.qualcomm.hardware.limelightvision.LLResultTypes;
 import com.qualcomm.robotcore.hardware.VoltageSensor;
 
+
 import java.util.List;
 
 @TeleOp
-public class CameraMemoria extends OpMode {
+public class CamTest extends OpMode {
 
     // ================= MOTORES =================
     DcMotor fe, fd, td, te;
@@ -27,22 +28,17 @@ public class CameraMemoria extends OpMode {
     Limelight3A limelight;
     final int TARGET_ID = 20;
 
-    // ================= CONTROLE DA CÂMERA =================
+    // ================= CAMERA / ODOMETRIA =================
+    final double TICKS_POR_GRAU = 28.68; // goBILDA 19.2:1
     final double kP = 0.015;
     final double kD = 0.004;
-    final double kFF = 0.35;
     final double DEAD_DEG = 0.4;
     final double MAX_POWER = 0.6;
 
+    double anguloCamera = 0;
+    double anguloGol = 0;
+    boolean golConhecido = false;
     double ultimoErro = 0;
-
-    // ===== MEMÓRIA DA TAG =====
-    double lastTx = 0;
-    long lastSeenTime = 0;
-
-    final long HOLD_TIME = 700;   // ms usando memória
-    final long SCAN_TIME = 1800;  // ms até iniciar scan
-    boolean scanRight = true;
 
     // ================= LANÇADOR =================
     boolean launcherAtivo = false;
@@ -64,7 +60,10 @@ public class CameraMemoria extends OpMode {
 
         cameraMotor = hardwareMap.get(DcMotor.class, "cameraMotor");
         cameraMotor.setDirection(DcMotorSimple.Direction.REVERSE);
-        cameraMotor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
+        cameraMotor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
+
+        cameraMotor.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+        cameraMotor.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
 
         intake.setDirection(DcMotorSimple.Direction.FORWARD);
         launcher.setDirection(DcMotorSimple.Direction.FORWARD);
@@ -93,18 +92,15 @@ public class CameraMemoria extends OpMode {
     @Override
     public void loop() {
 
-        // ================= ROTAÇÃO DO ROBÔ =================
-        double rotRobo = gamepad1.right_stick_x;
-        double rotCamera = -rotRobo;
+        // ================= ODOMETRIA DA CÂMERA =================
+        anguloCamera = cameraMotor.getCurrentPosition() / TICKS_POR_GRAU;
 
-        // ================= CÂMERA =================
+        // ================= VISÃO =================
         double txDegrees = 0;
         boolean viuTag = false;
-        long now = System.currentTimeMillis();
 
         if (limelight != null) {
             LLResult result = limelight.getLatestResult();
-
             if (result != null && result.isValid()) {
                 List<LLResultTypes.FiducialResult> fiducials =
                         result.getFiducialResults();
@@ -114,8 +110,6 @@ public class CameraMemoria extends OpMode {
                         if (fr.getFiducialId() == TARGET_ID) {
                             txDegrees = fr.getTargetXDegrees();
                             viuTag = true;
-                            lastTx = txDegrees;
-                            lastSeenTime = now;
                             break;
                         }
                     }
@@ -123,42 +117,28 @@ public class CameraMemoria extends OpMode {
             }
         }
 
-        double giroCamera;
-
+        // ================= ATUALIZA POSIÇÃO DO GOL =================
         if (viuTag) {
-            // ===== TRACKING NORMAL =====
-            double erro = txDegrees;
+            anguloGol = anguloCamera + txDegrees;
+            golConhecido = true;
+        }
+
+        // ================= CONTROLE DA CÂMERA =================
+        double giroCamera = 0;
+
+        if (golConhecido) {
+            double erro = anguloGol - anguloCamera;
             double derivada = erro - ultimoErro;
             ultimoErro = erro;
 
-            giroCamera = (erro * kP) + (derivada * kD) + (rotCamera * kFF);
+            giroCamera = (erro * kP) + (derivada * kD);
 
             if (Math.abs(erro) < DEAD_DEG) {
-                giroCamera = rotCamera * kFF;
+                giroCamera = 0;
             }
-
         } else {
-
-            long tempoPerdido = now - lastSeenTime;
-
-            if (tempoPerdido < HOLD_TIME) {
-                // ===== MEMÓRIA DA TAG =====
-                giroCamera = (lastTx * kP * 0.5) + (rotCamera * kFF);
-
-            } else if (tempoPerdido < SCAN_TIME) {
-                // ===== PAUSA CONTROLADA =====
-                giroCamera = rotCamera * kFF;
-                ultimoErro = 0;
-
-            } else {
-                // ===== SCAN FTC =====
-                double scanPower = 0.12;
-                giroCamera = scanRight ? scanPower : -scanPower;
-
-                if ((now / 1000) % 3 == 0) {
-                    scanRight = !scanRight;
-                }
-            }
+            // nunca viu o gol → varredura inicial lenta
+            giroCamera = 0.12;
         }
 
         giroCamera = Math.max(-MAX_POWER, Math.min(MAX_POWER, giroCamera));
@@ -167,6 +147,7 @@ public class CameraMemoria extends OpMode {
         // ================= MOVIMENTO =================
         double x = gamepad1.left_stick_x;
         double y = -gamepad1.left_stick_y;
+        double rotRobo = gamepad1.right_stick_x;
 
         double FAzul = y + x;
         double FVermelho = y - x;
@@ -203,10 +184,11 @@ public class CameraMemoria extends OpMode {
         else launcher.setPower(0);
 
         // ================= TELEMETRIA =================
-        telemetry.addData("Launcher Ativo", launcherAtivo);
-        telemetry.addData("Tag Vista", viuTag);
-        telemetry.addData("tx (graus)", txDegrees);
-        telemetry.addData("Bateria (V)", batteryVoltage.getVoltage());
+        telemetry.addData("Gol conhecido", golConhecido);
+        telemetry.addData("Ângulo câmera", anguloCamera);
+        telemetry.addData("Ângulo gol", anguloGol);
+        telemetry.addData("Tag vista", viuTag);
+        telemetry.addData("Bateria", batteryVoltage.getVoltage());
         telemetry.update();
     }
 }
