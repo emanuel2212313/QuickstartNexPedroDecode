@@ -7,38 +7,20 @@ import com.qualcomm.robotcore.hardware.DcMotorSimple;
 import com.qualcomm.robotcore.hardware.VoltageSensor;
 import com.qualcomm.robotcore.hardware.DistanceSensor;
 import com.qualcomm.robotcore.util.ElapsedTime;
+
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 
-import com.qualcomm.hardware.limelightvision.Limelight3A;
-import com.qualcomm.hardware.limelightvision.LLResult;
-import com.qualcomm.hardware.limelightvision.LLResultTypes;
-import java.util.List;
-
 @TeleOp
-public class TesteCamera extends OpMode {
+public class TesteComServo extends OpMode {
 
-    // ================= MOTORES =================
     DcMotor fe, fd, td, te;
+
     DcMotor intake;
     DcMotor intake2;
     DcMotor launcher;
     DcMotor cameraMotor;
 
     DistanceSensor distanceSensor;
-
-    // ================= LIMELIGHT =================
-    Limelight3A limelight;
-    final int TARGET_ID = 20;
-
-    // ===== CAMERA PID + MEMORIA =====
-    final double kP = 0.02;
-    final double kD = 0.004;
-    final double MAX_POWER = 0.6;
-
-    double ultimoErro = 0;
-    double lastTx = 0;
-    long lastSeenTime = 0;
-    boolean scanRight = true;
 
     ElapsedTime intakeTimer = new ElapsedTime();
 
@@ -85,15 +67,6 @@ public class TesteCamera extends OpMode {
         cameraMotor.setDirection(DcMotorSimple.Direction.REVERSE);
         cameraMotor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
 
-        // LIMELIGHT
-        try {
-            limelight = hardwareMap.get(Limelight3A.class, "limelight");
-            limelight.setPollRateHz(50);
-            limelight.start();
-        } catch (Exception e) {
-            limelight = null;
-        }
-
         batteryVoltage = hardwareMap.voltageSensor.iterator().next();
     }
 
@@ -105,7 +78,18 @@ public class TesteCamera extends OpMode {
     @Override
     public void loop() {
 
-        // ================= DRIVE =================
+        // ===== SENSOR PIXEL (MEMÓRIA) =====
+        double distancia = distanceSensor.getDistance(DistanceUnit.CM);
+
+        if (!launcherAtivo) {
+            if (distancia < 8) {
+                intake2Travado = true;
+            }
+        } else {
+            intake2Travado = false;
+        }
+
+        // ================= MOVIMENTO =================
         double rotRobo = gamepad1.right_stick_x;
         double x = gamepad1.left_stick_x;
         double y = -gamepad1.left_stick_y;
@@ -113,7 +97,9 @@ public class TesteCamera extends OpMode {
         double FAzul = y + x;
         double FVermelho = y - x;
 
-        if (gamepad1.right_stick_button) SpinMode = (SpinMode == 0) ? 1 : 0;
+        if (gamepad1.right_stick_button) {
+            SpinMode = (SpinMode == 0) ? 1 : 0;
+        }
 
         if (SpinMode == 0) {
             AzulFE = FAzul + (rotRobo * 1.8);
@@ -132,101 +118,37 @@ public class TesteCamera extends OpMode {
         fe.setPower(compensar(AzulFE));
         td.setPower(compensar(AzulTD));
 
-        // ================= CAMERA COM MEMORIA =================
-
-        double rotCamera = -rotRobo;
-        double txDegrees = 0;
-        boolean viuTag = false;
-        long now = System.currentTimeMillis();
-
-        if (limelight != null) {
-            LLResult result = limelight.getLatestResult();
-
-            if (result != null && result.isValid()) {
-                List<LLResultTypes.FiducialResult> fiducials = result.getFiducialResults();
-
-                if (fiducials != null) {
-                    for (LLResultTypes.FiducialResult fr : fiducials) {
-                        if (fr.getFiducialId() == TARGET_ID) {
-                            txDegrees = fr.getTargetXDegrees();
-                            viuTag = true;
-                            lastTx = txDegrees;
-                            lastSeenTime = now;
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        double giroCamera;
-
-        if (viuTag) {
-
-            double erro = txDegrees;
-            double derivada = erro - ultimoErro;
-            ultimoErro = erro;
-
-            giroCamera = (erro * kP) + (derivada * kD) + (rotCamera * 0.35);
-
-            if (Math.abs(erro) < 0.4)
-                giroCamera = rotCamera * 0.35;
-
-        } else {
-
-            long tempoPerdido = now - lastSeenTime;
-
-            if (tempoPerdido < 700) {
-
-                giroCamera = (lastTx * kP * 0.5) + (rotCamera * 0.35);
-
-            } else if (tempoPerdido < 1800) {
-
-                giroCamera = rotCamera * 0.35;
-                ultimoErro = 0;
-
-            } else {
-
-                double scanPower = 0.12;
-                giroCamera = scanRight ? scanPower : -scanPower;
-
-                if ((now / 1000) % 3 == 0)
-                    scanRight = !scanRight;
-            }
-        }
-
-        giroCamera = Math.max(-MAX_POWER, Math.min(MAX_POWER, giroCamera));
-        cameraMotor.setPower(compensar(giroCamera));
-
-        // ===== SENSOR PIXEL =====
-        double distancia = distanceSensor.getDistance(DistanceUnit.CM);
-
-        if (!launcherAtivo) {
-            if (distancia < 8) intake2Travado = true;
-        } else intake2Travado = false;
-
         // ================= INTAKE MANUAL =================
         boolean rtAtual = gamepad1.right_trigger > 0.8;
-        if (!launcherAtivo && rtAtual && !rtAnterior)
+        if (!launcherAtivo && rtAtual && !rtAnterior) {
             intakeManual = !intakeManual;
+        }
         rtAnterior = rtAtual;
 
         // ================= LAUNCHER =================
         boolean lbAtual = gamepad1.left_bumper;
+
         if (lbAtual && !lbAnterior) {
             launcherAtivo = !launcherAtivo;
+
             intakeTimer.reset();
-            if (!launcherAtivo) intakeAutomatico = false;
+
+            if (!launcherAtivo) {
+                intakeAutomatico = false;
+            }
         }
         lbAnterior = lbAtual;
 
         launcher.setPower(launcherAtivo ? compensar(1.0) : 0);
 
-        // ================= INTAKE AUTO =================
-        if (launcherAtivo && !intakeAutomatico && intakeTimer.seconds() >= 2.5)
+        // ================= INTAKE AUTOMÁTICO =================
+        if (launcherAtivo && !intakeAutomatico && intakeTimer.seconds() >= 2.5) {
             intakeAutomatico = true;
+        }
 
+        // ================= POTÊNCIA FINAL DO INTAKE =================
         double intakePower;
+
         if (launcherAtivo) intakePower = intakeAutomatico ? 0.7 : 0;
         else intakePower = intakeManual ? 0.7 : 0;
 
@@ -238,8 +160,8 @@ public class TesteCamera extends OpMode {
             intake2.setPower(0);
 
         telemetry.addData("Distancia", distancia);
+        telemetry.addData("Intake2 Travado", intake2Travado);
         telemetry.addData("Launcher", launcherAtivo);
-        telemetry.addData("Tag Vista", viuTag);
         telemetry.update();
     }
 }
