@@ -8,6 +8,9 @@ import com.qualcomm.robotcore.hardware.VoltageSensor;
 import com.qualcomm.robotcore.hardware.DistanceSensor;
 import com.qualcomm.robotcore.util.ElapsedTime;
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
+import com.pedropathing.follower.Follower;
+import com.pedropathing.geometry.Pose;
+import org.firstinspires.ftc.teamcode.pedroPathing.Constants;
 
 import com.qualcomm.hardware.limelightvision.Limelight3A;
 import com.qualcomm.hardware.limelightvision.LLResult;
@@ -15,7 +18,7 @@ import com.qualcomm.hardware.limelightvision.LLResultTypes;
 import java.util.List;
 
 @TeleOp
-public class NovaCamera extends OpMode {
+public class TeleRed extends OpMode {
 
     // ================= MOTORES =================
     DcMotor fe, fd, td, te;
@@ -24,11 +27,13 @@ public class NovaCamera extends OpMode {
     DcMotor launcher;
     DcMotor cameraMotor;
 
+    Follower follower;
+
     DistanceSensor distanceSensor;
 
     // ================= LIMELIGHT =================
     Limelight3A limelight;
-    final int TARGET_ID = 20;
+    final int TARGET_ID = 19;
 
     // ===== CAMERA PID + MEMORIA =====
     final double kP = 0.02;
@@ -54,9 +59,9 @@ public class NovaCamera extends OpMode {
     double AzulFE, AzulTD, VermelhoTE, VermelhoFD;
     double SpinMode = 1;
     double launcherPowerMultiplier = 1.0;
+    boolean tagAlinhada = false;
 
-    double distanciaTagCm = -1;
-    double potenciaLauncherCalculada = 0.9;
+
 
 
 
@@ -103,6 +108,8 @@ public class NovaCamera extends OpMode {
         }
 
         batteryVoltage = hardwareMap.voltageSensor.iterator().next();
+
+        follower = Constants.createFollower(hardwareMap);
     }
 
     private double compensar(double power) {
@@ -113,8 +120,10 @@ public class NovaCamera extends OpMode {
     @Override
     public void loop() {
 
-        if (gamepad1.a) launcherPowerMultiplier = 1.0;
-        if (gamepad1.b) launcherPowerMultiplier = 0.83;
+        follower.update();
+
+        if (gamepad2.a) launcherPowerMultiplier = 1.0;
+        if (gamepad2.b) launcherPowerMultiplier = 0.83;
 
 
 
@@ -149,7 +158,6 @@ public class NovaCamera extends OpMode {
 
         double rotCamera = -rotRobo;
         double txDegrees = 0;
-        double tyDegress = 0;
         boolean viuTag = false;
         long now = System.currentTimeMillis();
 
@@ -183,20 +191,16 @@ public class NovaCamera extends OpMode {
 
             giroCamera = (erro * kP) + (derivada * kD) + (rotCamera * 0.35);
 
-            if (Math.abs(erro) < 0.4)
-                giroCamera = rotCamera * 0.35;
-            double alturaCamera = 0.20;
-            double alturaTag = 0.30;
-            double anguloVerticalRad = Math.toRadians(tyDegress);
+            if (Math.abs(erro) < 0.3)
+                giroCamera *= 0.4;   // reduz suavemente, não corta seco
+            tagAlinhada = Math.abs(erro) < 0.3;
 
-            distanciaTagCm = ((alturaTag - alturaCamera) / Math.tan(anguloVerticalRad)) *100.0;
 
-            potenciaLauncherCalculada = 0.55 + (distanciaTagCm * 0.0035);
-            if (potenciaLauncherCalculada < 0.60) potenciaLauncherCalculada = 0.60;
-            if (potenciaLauncherCalculada > 0.95) potenciaLauncherCalculada = 0.95;
+
 
 
         } else {
+            tagAlinhada = false;
 
             long tempoPerdido = now - lastSeenTime;
 
@@ -241,17 +245,17 @@ public class NovaCamera extends OpMode {
         double distancia = distanceSensor.getDistance(DistanceUnit.CM);
 
         if (!launcherAtivo) {
-            if (distancia < 8) intake2Travado = true;
+            if (distancia < 11) intake2Travado = true;
         } else intake2Travado = false;
 
         // ================= INTAKE MANUAL =================
-        boolean rtAtual = gamepad1.right_trigger > 0.8;
+        boolean rtAtual = gamepad2.right_trigger > 0.8;
         if (!launcherAtivo && rtAtual && !rtAnterior)
             intakeManual = !intakeManual;
         rtAnterior = rtAtual;
 
         // ================= LAUNCHER =================
-        boolean lbAtual = gamepad1.left_bumper;
+        boolean lbAtual = gamepad2.left_bumper;
         if (lbAtual && !lbAnterior) {
             launcherAtivo = !launcherAtivo;
             intakeTimer.reset();
@@ -259,17 +263,29 @@ public class NovaCamera extends OpMode {
         }
         lbAnterior = lbAtual;
 
-        launcher.setPower(launcherAtivo ? compensar(1.0 *launcherPowerMultiplier) : 0);
+        double launcherPower = 0;
+
+// Se estiver alinhado com a tag → mantém 50%
+        if (tagAlinhada && !launcherAtivo) {
+            launcherPower = 0.5;
+        }
+
+// Se apertar para lançar (left bumper)
+        if (launcherAtivo) {
+            launcherPower = launcherPowerMultiplier;
+        }
+
+        launcher.setPower(compensar(launcherPower));
 
 
 
         // ================= INTAKE AUTO =================
-        if (launcherAtivo && !intakeAutomatico && intakeTimer.seconds() >= 2.5)
+        if (launcherAtivo && !intakeAutomatico && intakeTimer.seconds() >= 1.5)
             intakeAutomatico = true;
 
         double intakePower;
         if (launcherAtivo) intakePower = intakeAutomatico ? 0.7 : 0;
-        else intakePower = intakeManual ? 0.7 : 0;
+        else intakePower = intakeManual ? 1.0 : 0;
 
         intake.setPower(compensar(intakePower));
 
@@ -282,6 +298,7 @@ public class NovaCamera extends OpMode {
         telemetry.addData("Launcher", launcherAtivo);
         telemetry.addData("Tag Vista", viuTag);
         telemetry.addData("Posição da Camera", cameraMotor.getCurrentPosition());
+        telemetry.addData("Potencia do shooter", launcherPowerMultiplier);
         telemetry.update();
     }
 }
